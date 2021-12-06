@@ -2,9 +2,13 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <pthread.h>
 #include <string>
 #include <queue>
+#include <functional>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+
 using namespace std;
 
 #define BUFFER_LEN 1024
@@ -25,15 +29,15 @@ queue<string> message_q[MAX_CLIENT_NUM]; //message buffer
 //the full number of clients exist in the chat room
 int current_client_num = 0;
 //sync current_client_num
-pthread_mutex_t num_mutex = PTHREAD_MUTEX_INITIALIZER;
+std::mutex num_mutex;
 
 //2 kinds of threads
-pthread_t chat_thread[MAX_CLIENT_NUM] = {0};
-pthread_t send_thread[MAX_CLIENT_NUM] = {0};
+std::thread chat_thread[MAX_CLIENT_NUM];
+std::thread send_thread[MAX_CLIENT_NUM];
 
 //used to sync
-pthread_mutex_t mutex[MAX_CLIENT_NUM] = {0};
-pthread_cond_t cv[MAX_CLIENT_NUM] = {0};
+std::mutex client_mutex[MAX_CLIENT_NUM];
+std::condition_variable cv[MAX_CLIENT_NUM];
 
 //send message
 void *handle_send(void *data)
@@ -41,11 +45,11 @@ void *handle_send(void *data)
     struct Client *pipe = (struct Client *)data;
     while (1)
     {
-        pthread_mutex_lock(&mutex[pipe->fd_id]);
         //wait until new message receive
         while (message_q[pipe->fd_id].empty())
         {
-            pthread_cond_wait(&cv[pipe->fd_id], &mutex[pipe->fd_id]);
+            unique_lock<mutex> mLock(client_mutex[pipe->fd_id]);
+            cv[pipe->fd_id].wait(mLock);
         }
         //if message queue isn't full, send message
         while (!message_q[pipe->fd_id].empty())
@@ -72,7 +76,6 @@ void *handle_send(void *data)
             message_buffer.clear();
             message_q[pipe->fd_id].pop();
         }
-        pthread_mutex_unlock(&mutex[pipe->fd_id]);
     }
     return NULL;
 }
@@ -115,10 +118,8 @@ void handle_recv(void *data)
                 {
                     if (client[j].valid && client[j].socket != pipe->socket)
                     {
-                        pthread_mutex_lock(&mutex[j]);
                         message_q[j].push(message_buffer);
-                        pthread_cond_signal(&cv[j]);
-                        pthread_mutex_unlock(&mutex[j]);
+                        cv[j].notify_one();
                     }
                 }
                 //new message start
@@ -141,10 +142,9 @@ void *chat(void *data)
     //printf hello message
     char hello[100];
     sprintf(hello, "Hello %s, Welcome to join the chat room. Online User Number: %d\n", pipe->name, current_client_num);
-    pthread_mutex_lock(&mutex[pipe->fd_id]);
+
     message_q[pipe->fd_id].push(hello);
-    pthread_cond_signal(&cv[pipe->fd_id]);
-    pthread_mutex_unlock(&mutex[pipe->fd_id]);
+    cv[pipe->fd_id].notify_one();
 
     memset(hello, 0, sizeof(hello));
     sprintf(hello, "New User %s join in! Online User Number: %d\n", pipe->name, current_client_num);
@@ -153,24 +153,23 @@ void *chat(void *data)
     {
         if (client[j].valid && client[j].socket != pipe->socket)
         {
-            pthread_mutex_lock(&mutex[j]);
             message_q[j].push(hello);
-            pthread_cond_signal(&cv[j]);
-            pthread_mutex_unlock(&mutex[j]);
+            cv[j].notify_one();
         }
     }
 
     //create a new thread to handle send messages for this socket
-    pthread_create(&send_thread[pipe->fd_id], NULL, handle_send, (void *)pipe);
+    send_thread[pipe->fd_id] = std::thread(handle_send, (void *)pipe);
+    send_thread[pipe->fd_id].detach();
 
     //receive message
     handle_recv(data);
 
     //because the recv() function is blocking, so when handle_recv() return, it means this user is offline
-    pthread_mutex_lock(&num_mutex);
+    num_mutex.lock();
     pipe->valid = 0;
     current_client_num--;
-    pthread_mutex_unlock(&num_mutex);
+    num_mutex.unlock();
     //printf bye message
     printf("%s left the chat room. Online Person Number: %d\n", pipe->name, current_client_num);
     char bye[100];
@@ -180,17 +179,10 @@ void *chat(void *data)
     {
         if (client[j].valid && client[j].socket != pipe->socket)
         {
-            pthread_mutex_lock(&mutex[j]);
             message_q[j].push(bye);
-            pthread_cond_signal(&cv[j]);
-            pthread_mutex_unlock(&mutex[j]);
+            cv[j].notify_one();
         }
     }
-
-    pthread_mutex_destroy(&mutex[pipe->fd_id]);
-    pthread_cond_destroy(&cv[pipe->fd_id]);
-    pthread_cancel(send_thread[pipe->fd_id]);
-
     return NULL;
 }
 
@@ -268,7 +260,7 @@ int main()
             //find the first unused client
             if (!client[i].valid)
             {
-                pthread_mutex_lock(&num_mutex);
+                num_mutex.lock();
                 //set name
                 memset(client[i].name, 0, sizeof(client[i].name));
                 strcpy(client[i].name, name);
@@ -277,16 +269,16 @@ int main()
                 client[i].fd_id = i;
                 client[i].socket = client_sock;
 
-                mutex[i] = PTHREAD_MUTEX_INITIALIZER;
-                cv[i] = PTHREAD_COND_INITIALIZER;
+                //cv[i].notify_one();
 
                 current_client_num++;
-                pthread_mutex_unlock(&num_mutex);
+                num_mutex.unlock();
 
                 //create new receive thread for new client
-                pthread_create(&chat_thread[i], NULL, chat, (void *)&client[i]);
-                printf("%s join in the chat room. Online User Number: %d\n", client[i].name, current_client_num);
+                chat_thread[i] = std::thread(chat, (void *)&client[i]);
+                chat_thread[i].detach();
 
+                printf("%s join in the chat room. Online User Number: %d\n", client[i].name, current_client_num);
                 break;
             }
         }
