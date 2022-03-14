@@ -1,10 +1,61 @@
-# C++实现多人聊天室
+# 基于C++的多人聊天室
 
 **该代码为`Linux`版本，已在`WSL Ubuntu20.04`上测试通过.**
 
 ## Get Started
 
-在`src/`文件夹下，输入`make`命令即可完成编译，生成可执行文件`Server`和`Client`，分别是服务器程序和客户端程序。
+在`src/`文件夹下，输入`make`命令，即可完成编译并生成可执行文件`Server`和`Client`，分别是服务器程序和客户端程序。
+
+在终端中输入`./Server`即可运行服务器，可以看到终端打印出如下信息:
+
+```
+Please enter the port number of the server: 
+```
+
+提示用户输入服务器端口号，输入`8888`后，可以看到如下信息:
+
+```
+Server start successfully!
+You can join the chatroom by connecting to 127.0.0.1:8888
+```
+
+表明服务器正常开启，在`127.0.0.1:8888`监听`TCP`连接。
+
+接下来可以新建终端，输入`./Client`即可运行服务器，此时程序会依次提示输入服务器IP地址以及端口号:
+
+```
+Please enter IP address of the server: 127.0.0.1
+Please enter port number of the server: 8888
+Connect Successfully!
+Welcome to Use Multi-Person Chatroom!
+```
+
+握手成功后会提示输入用户名:
+
+```
+Please enter your name: Komorebi
+Hello Komorebi, Welcome to join the chatroom. Online User Number: 1
+```
+
+确认后服务器会打印如下信息:
+
+```
+Komorebi join in the chatroom. Online User Number: 1
+```
+
+表明有新用户进入。用户想要断开连接可以按下`ctrl+c`或直接关闭终端，此时服务器会打印如下信息:
+
+```
+Komorebi left the chatroom. Online Person Number: 0
+```
+
+表明该用户已离开。
+
+### Advanced
+
+- 在`Server.cpp`中，可以通过修改宏定义`MAX_CLIENT_NUM`来调节最大客户连接数。
+- 在`Server.cpp`和`Client.cpp`中可以通过修改宏定义`BUFFER_LEN`来调节缓冲区大小，修改宏定义`NAME_LEN`来调节用户姓名的最大长度。
+
 
 ## 代码简介
 
